@@ -42,9 +42,12 @@ class KANConv2D(Layer):
             padding=self.padding.upper()
         )
         
-        # Reshape patches and control points for distance calculation
+        # Use tf.shape to get dynamic dimensions
+        input_shape = tf.shape(inputs)
         patches_shape = tf.shape(patches)
-        patches_reshaped = tf.reshape(patches, [-1, self.kernel_size[0] * self.kernel_size[1] * inputs.shape[-1]])
+        patch_size = self.kernel_size[0] * self.kernel_size[1] * input_shape[-1]
+        
+        patches_reshaped = tf.reshape(patches, [-1, patch_size])
         control_points_reshaped = tf.reshape(self.control_points, [-1, self.filters])
         
         # Compute distances
@@ -68,42 +71,55 @@ original_data_dir = '/content/drive/MyDrive/gtprac/original_grape_data'
 train_dir = '/content/drive/MyDrive/gtprac/original_grape_data/binary_train'
 test_dir = '/content/drive/MyDrive/gtprac/original_grape_data/binary_test'
 
-def clear_and_create_dir(directory):
-    if os.path.exists(directory):
-        shutil.rmtree(directory)
-        print(f"Removed existing directory: {directory}")
-    os.makedirs(directory)
-    print(f"Created directory: {directory}")
+# def clear_and_create_dir(directory):
+#     if os.path.exists(directory):
+#         shutil.rmtree(directory)
+#         print(f"Removed existing directory: {directory}")
+#     os.makedirs(directory)
+#     print(f"Created directory: {directory}")
 
-clear_and_create_dir(train_dir)
-clear_and_create_dir(test_dir)
+# clear_and_create_dir(train_dir)
+# clear_and_create_dir(test_dir)
 
-for category in ['healthy', 'esca']:
-    os.makedirs(os.path.join(train_dir, category), exist_ok=True)
-    os.makedirs(os.path.join(test_dir, category), exist_ok=True)
-    print(f"Created subdirectories for category: {category} in both train and test directories")
+# for category in ['healthy', 'esca']:
+#     os.makedirs(os.path.join(train_dir, category), exist_ok=True)
+#     os.makedirs(os.path.join(test_dir, category), exist_ok=True)
+#     print(f"Created subdirectories for category: {category} in both train and test directories")
 
-def move_files(src_dir, dst_dir, category):
-    print(f"Moving files from {src_dir} to {dst_dir} for category: {category}")
-    for folder in os.listdir(src_dir):
-        folder_path = os.path.join(src_dir, folder)
-        if os.path.isdir(folder_path):
-            for file in os.listdir(folder_path):
-                file_path = os.path.join(folder_path, file)
-                if category == 'healthy' and folder != 'ESCA':
-                    shutil.copy(file_path, os.path.join(dst_dir, 'healthy'))
-                    print(f"Copied {file_path} to {os.path.join(dst_dir, 'healthy')}")
-                elif category == 'esca' and folder == 'ESCA':
-                    shutil.copy(file_path, os.path.join(dst_dir, 'esca'))
-                    print(f"Copied {file_path} to {os.path.join(dst_dir, 'esca')}")
+# def move_files(src_dir, dst_dir, category):
+#     print(f"Moving files from {src_dir} to {dst_dir} for category: {category}")
+#     for folder in os.listdir(src_dir):
+#         folder_path = os.path.join(src_dir, folder)
+#         if os.path.isdir(folder_path):
+#             for file in os.listdir(folder_path):
+#                 file_path = os.path.join(folder_path, file)
+#                 if category == 'healthy' and folder != 'ESCA':
+#                     shutil.copy(file_path, os.path.join(dst_dir, 'healthy'))
+#                     # print(f"Copied {file_path} to {os.path.join(dst_dir, 'healthy')}")
+#                 elif category == 'esca' and folder == 'ESCA':
+#                     shutil.copy(file_path, os.path.join(dst_dir, 'esca'))
+#                     # print(f"Copied {file_path} to {os.path.join(dst_dir, 'esca')}")
 
-# Combine images to create healthy and esca paths
-move_files(os.path.join(original_data_dir, 'train'), train_dir, 'healthy')
-move_files(os.path.join(original_data_dir, 'train'), train_dir, 'esca')
-move_files(os.path.join(original_data_dir, 'test'), test_dir, 'healthy')
-move_files(os.path.join(original_data_dir, 'test'), test_dir, 'esca')
+# # Combine images to create healthy and esca paths
+# move_files(os.path.join(original_data_dir, 'train'), train_dir, 'healthy')
+# move_files(os.path.join(original_data_dir, 'train'), train_dir, 'esca')
+# move_files(os.path.join(original_data_dir, 'test'), test_dir, 'healthy')
+# move_files(os.path.join(original_data_dir, 'test'), test_dir, 'esca')
 
 print("Data preparation complete.")
+
+train_datagen = ImageDataGenerator(
+    rescale=1./255,
+    rotation_range=40,
+    width_shift_range=0.3,
+    height_shift_range=0.3,
+    shear_range=0.3,
+    zoom_range=0.3,
+    horizontal_flip=True,
+    fill_mode='nearest'
+)
+
+test_datagen = ImageDataGenerator(rescale=1./255)
 
 train_generator = train_datagen.flow_from_directory(
     train_dir,
