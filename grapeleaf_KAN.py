@@ -62,11 +62,14 @@ class KANConv2D(Layer):
     def compute_output_shape(self, input_shape):
         return input_shape[:-1] + (self.filters,)
     
-    
+# Mount Google Drive
+from google.colab import drive
+drive.mount('/content/drive')
+
 # Data Preparation
-original_data_dir = '/Users/michaelrodden/Desktop/original_grape_data'
-train_dir = '/Users/michaelrodden/Desktop/original_grape_data/binary_train'
-test_dir = '/Users/michaelrodden/Desktop/original_grape_data/binary_test'
+original_data_dir = '/content/drive/MyDrive/gtprac/original_grape_data'
+train_dir = '/content/drive/MyDrive/gtprac/original_grape_data/binary_train'
+test_dir = '/content/drive/MyDrive/gtprac/original_grape_data/binary_test'
 
 def clear_and_create_dir(directory):
     if os.path.exists(directory):
@@ -120,7 +123,7 @@ train_generator = train_datagen.flow_from_directory(
 validation_generator = test_datagen.flow_from_directory(
     test_dir,
     target_size=(150, 150),
-    batch_size=32,
+    batch_size=8,
     class_mode='binary'
 )
 
@@ -167,7 +170,7 @@ history = model.fit(
 )
 
 # Save keras model
-model.save('grapeleaf_classifier_kan_best.keras')
+model.save('/content/drive/MyDrive/grapeleaf_classifier_kan_best.keras')
 
 # Evaluate
 loss, accuracy = model.evaluate(validation_generator)
