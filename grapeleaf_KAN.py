@@ -147,6 +147,8 @@ def build_model():
     x = MaxPooling2D(2, 2)(x)
     x = KANConv2D(256, 3, padding='same')(x)
     x = MaxPooling2D(2, 2)(x)
+    x = KANConv2D(512, 3, padding='same')(x)
+    x = MaxPooling2D(2, 2)(x)
     x = Flatten()(x)
     x = Dense(512, activation='relu')(x)
     x = Dropout(0.5)(x)
@@ -160,7 +162,7 @@ class_weights = {0: 1.0, 1: 2.3}
 
 # Compile the model with class weights and learning rate adjustment
 model = build_model()
-optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001, clipvalue=1.0)
+optimizer = tf.keras.optimizers.Adam(learning_rate=0.00001, clipvalue=1.0)
 model.compile(
     optimizer=optimizer,
     loss='binary_crossentropy',
