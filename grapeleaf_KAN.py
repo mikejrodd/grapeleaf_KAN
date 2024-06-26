@@ -6,6 +6,8 @@ from tensorflow.keras.callbacks import EarlyStopping
 import os
 import shutil
 
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+
 class KANConv2D(Layer):
     def __init__(self, filters, kernel_size, strides=(1, 1), padding='valid', **kwargs):
         super(KANConv2D, self).__init__(**kwargs)
@@ -124,7 +126,7 @@ test_datagen = ImageDataGenerator(rescale=1./255)
 train_generator = train_datagen.flow_from_directory(
     train_dir,
     target_size=(150, 150),
-    batch_size=8,
+    batch_size=2,
     class_mode='binary'
 )
 print(f"Training data loaded from {train_dir}")
@@ -132,7 +134,7 @@ print(f"Training data loaded from {train_dir}")
 validation_generator = test_datagen.flow_from_directory(
     test_dir,
     target_size=(150, 150),
-    batch_size=8,
+    batch_size=2,
     class_mode='binary'
 )
 print(f"Validation data loaded from {test_dir}")
