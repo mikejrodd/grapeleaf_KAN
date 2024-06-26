@@ -126,7 +126,7 @@ test_datagen = ImageDataGenerator(rescale=1./255)
 train_generator = train_datagen.flow_from_directory(
     train_dir,
     target_size=(150, 150),
-    batch_size=2,
+    batch_size=5,
     class_mode='binary'
 )
 print(f"Training data loaded from {train_dir}")
@@ -134,7 +134,7 @@ print(f"Training data loaded from {train_dir}")
 validation_generator = test_datagen.flow_from_directory(
     test_dir,
     target_size=(150, 150),
-    batch_size=2,
+    batch_size=5,
     class_mode='binary'
 )
 print(f"Validation data loaded from {test_dir}")
