@@ -189,3 +189,29 @@ model.save('/content/drive/MyDrive/grapeleaf_classifier_kan_best.keras')
 # Evaluate
 loss, accuracy = model.evaluate(validation_generator)
 print(f'Test accuracy: {accuracy}, Test loss: {loss}')
+
+from sklearn.metrics import recall_score, classification_report
+import numpy as np
+
+# Evaluate the model on the validation data
+loss, accuracy = model.evaluate(validation_generator)
+print(f'Test accuracy: {accuracy}, Test loss: {loss}')
+
+# Make predictions on the validation data
+validation_generator.reset()
+predictions = model.predict(validation_generator)
+predicted_classes = np.where(predictions > 0.5, 1, 0)
+
+# Get true labels
+true_classes = validation_generator.classes
+class_labels = list(validation_generator.class_indices.keys())
+
+# Calculate recall for each class
+recall_healthy = recall_score(true_classes, predicted_classes, pos_label=0)
+recall_esca = recall_score(true_classes, predicted_classes, pos_label=1)
+
+print(f'Recall for Healthy Leaves: {recall_healthy}')
+print(f'Recall for Esca Leaves: {recall_esca}')
+
+# Detailed classification report
+print(classification_report(true_classes, predicted_classes, target_names=class_labels))
