@@ -136,7 +136,7 @@ def build_model():
     return model
 
 # Adjust class weights to reduce ESCA false negatives
-class_weights = {0: 1.2, 1: 1.0}  
+class_weights = {0: 2.0, 1: 1.0}  
 
 # experiement with focal loss -> be sure to change in compile
 def focal_loss(gamma=2.5, alpha=0.5):
@@ -152,7 +152,7 @@ def focal_loss(gamma=2.5, alpha=0.5):
 
 # Compile the model with focal loss and learning rate adjustment
 model = build_model()
-optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001, clipvalue=1.0)  # Adjusted learning rate
+optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipvalue=1.0)  # Adjusted learning rate
 model.compile(
     optimizer=optimizer,
     # loss=focal_loss(),
