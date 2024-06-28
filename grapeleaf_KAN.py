@@ -129,7 +129,7 @@ def build_model():
     model = Model(inputs, outputs)
     return model
 
-class_weights = {0: 3.4, 1: 1.0}  
+class_weights = {0: 1.88, 1: 0.68} 
 
 # experiement with focal loss -> be sure to change in compile
 def focal_loss(gamma=2.5, alpha=0.5):
