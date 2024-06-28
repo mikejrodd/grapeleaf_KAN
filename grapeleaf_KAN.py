@@ -136,7 +136,7 @@ def build_model():
     return model
 
 # Adjust class weights to reduce ESCA false negatives
-class_weights = {0: 5.0, 1: 1.0}  
+class_weights = {0: 1.2, 1: 1.0}  
 
 # experiement with focal loss -> be sure to change in compile
 def focal_loss(gamma=2.5, alpha=0.5):
@@ -155,8 +155,8 @@ model = build_model()
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001, clipvalue=1.0)  # Adjusted learning rate
 model.compile(
     optimizer=optimizer,
-    loss=focal_loss(),
-    # loss='binary_crossentropy',
+    # loss=focal_loss(),
+    loss='binary_crossentropy',
     metrics=['accuracy']
 )
 
@@ -192,7 +192,7 @@ predictions = model.predict(validation_generator)
 print(f'Predictions range: {np.min(predictions)} to {np.max(predictions)}')
 
 # Convert probabilities to binary classes using a threshold of 0.5
-threshold = 0.57  # Adjust this value as needed
+threshold = 0.50  # Adjust this value as needed
 predicted_classes = np.where(predictions > threshold, 1, 0)
 
 # Get true labels
