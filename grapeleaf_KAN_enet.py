@@ -134,7 +134,7 @@ def build_model():
     return model
 
 model = build_model()
-optimizer = tf.keras.optimizers.Nadam(learning_rate=0.0001)
+optimizer = tf.keras.optimizers.Nadam(learning_rate=0.0001, clipvalue=0.5)
 model.compile(
     optimizer=optimizer,
     loss='binary_crossentropy',
