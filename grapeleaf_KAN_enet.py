@@ -4,6 +4,7 @@ from tensorflow.keras.applications import EfficientNetB0
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, MaxPooling2D, Flatten, Dense, Dropout, Layer
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras import mixed_precision
 from sklearn.metrics import classification_report, confusion_matrix, roc_curve, auc
 import numpy as np
 import os
@@ -11,6 +12,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+
+mixed_precision.set_global_policy('mixed_float16')
 
 class KANConv2D(Layer):
     def __init__(self, filters, kernel_size, strides=(1, 1), padding='valid', **kwargs):
@@ -81,36 +84,52 @@ validation_datagen = ImageDataGenerator(rescale=1./255)
 train_generator = train_datagen.flow_from_directory(
     train_dir,
     target_size=(150, 150),
-    batch_size=32,
+    batch_size=6,
     class_mode='binary'
 )
 
 validation_generator = validation_datagen.flow_from_directory(
     test_dir,
     target_size=(150, 150),
-    batch_size=32,
+    batch_size=6,
     class_mode='binary'
 )
 
-class_weights = {0: 2.0, 1: 1.0}
+class_weights = {0: 3.4, 1: 1.0}
 
 base_model = EfficientNetB0(include_top=False, input_shape=(150, 150, 3), weights='imagenet')
 base_model.trainable = False
 
 def build_model():
+    base_model = EfficientNetB0(include_top=False, input_shape=(150, 150, 3), weights='imagenet')
+    base_model.trainable = False
+    
+    # an intermediate layer of EfficientNetB0
+    intermediate_layer_model = tf.keras.Model(inputs=base_model.input, outputs=base_model.get_layer('block2a_expand_activation').output)
+    
     inputs = Input(shape=(150, 150, 3))
-    x = base_model(inputs, training=False)
+    x = intermediate_layer_model(inputs, training=False)
+    
     x = KANConv2D(64, 3, padding='same')(x)
-    x = MaxPooling2D(2, 2)(x)
+    x = MaxPooling2D(pool_size=(2, 2))(x)  
+    print(f'Shape after first block: {x.shape}')
+
     x = KANConv2D(128, 3, padding='same')(x)
-    x = MaxPooling2D(2, 2)(x)
+    x = MaxPooling2D(pool_size=(2, 2))(x) 
+    print(f'Shape after second block: {x.shape}')
+    
     x = KANConv2D(256, 3, padding='same')(x)
-    x = MaxPooling2D(2, 2)(x)
+    x = MaxPooling2D(pool_size=(2, 2))(x)  
+    print(f'Shape after third block: {x.shape}')
+    
     x = KANConv2D(512, 3, padding='same')(x)
+    print(f'Shape after fourth block: {x.shape}')
+    
     x = Flatten()(x)
     x = Dense(512, activation='relu')(x)
     x = Dropout(0.5)(x)
     outputs = Dense(1, activation='sigmoid')(x)
+    
     model = Model(inputs, outputs)
     return model
 
@@ -128,7 +147,7 @@ reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr
 history = model.fit(
     train_generator,
     steps_per_epoch=train_generator.samples // train_generator.batch_size,
-    epochs=1,
+    epochs=50,
     validation_data=validation_generator,
     validation_steps=validation_generator.samples // validation_generator.batch_size,
     class_weight=class_weights,
@@ -164,7 +183,6 @@ plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.title('Receiver Operating Characteristic')
 plt.legend(loc="lower right")
-roc_curve_path = os.path.join(original_data_dir, 'roc_curve.png')
+roc_curve_path = os.path.join(original_data_dir, 'roc_curve_enet.png')
 plt.savefig(roc_curve_path)
 print(f'ROC curve saved to {roc_curve_path}')
-plt.show()
