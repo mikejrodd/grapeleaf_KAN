@@ -107,7 +107,6 @@ def build_model():
     x = KANConv2D(256, 3, padding='same')(x)
     x = MaxPooling2D(2, 2)(x)
     x = KANConv2D(512, 3, padding='same')(x)
-    x = MaxPooling2D(2, 2)(x)
     x = Flatten()(x)
     x = Dense(512, activation='relu')(x)
     x = Dropout(0.5)(x)
