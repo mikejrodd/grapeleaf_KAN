@@ -136,7 +136,7 @@ def build_model():
     return model
 
 # Adjust class weights to reduce ESCA false negatives
-class_weights = {0: 1.0, 1: 20.0}  
+class_weights = {0: 5.0, 1: 1.0}  
 
 # experiement with focal loss -> be sure to change in compile
 def focal_loss(gamma=2.5, alpha=0.5):
