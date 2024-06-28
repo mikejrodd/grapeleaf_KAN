@@ -3,6 +3,7 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, MaxPooling2D, Flatten, Dense, Dropout, Layer
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras import mixed_precision
 from sklearn.metrics import classification_report, confusion_matrix
 import numpy as np
 import os
@@ -11,6 +12,7 @@ import seaborn as sns
 from sklearn.metrics import roc_curve, auc
 
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+mixed_precision.set_global_policy('mixed_float16')
 
 class KANConv2D(Layer):
     def __init__(self, filters, kernel_size, strides=(1, 1), padding='valid', **kwargs):
@@ -39,7 +41,6 @@ class KANConv2D(Layer):
         return conv_out + kan_out + self.bias
 
     def kernel_adaptive_network(self, inputs):
-        # Extract patches from the input
         patches = tf.image.extract_patches(
             images=inputs,
             sizes=[1, self.kernel_size[0], self.kernel_size[1], 1],
@@ -48,7 +49,6 @@ class KANConv2D(Layer):
             padding=self.padding.upper()
         )
         
-        # Use tf.shape to get dynamic dimensions
         input_shape = tf.shape(inputs)
         patches_shape = tf.shape(patches)
         patch_size = self.kernel_size[0] * self.kernel_size[1] * input_shape[-1]
@@ -56,14 +56,11 @@ class KANConv2D(Layer):
         patches_reshaped = tf.reshape(patches, [-1, patch_size])
         control_points_reshaped = tf.reshape(self.control_points, [-1, self.filters])
         
-        # Compute distances
         distances = tf.reduce_sum(tf.square(tf.expand_dims(patches_reshaped, 2) - tf.expand_dims(control_points_reshaped, 0)), axis=1)
         
-        # Apply RBF kernel
         gamma = 1.0 / (2.0 * tf.reduce_mean(distances))
         kernel_output = tf.exp(-gamma * distances)
         
-        # Reshape kernel output to match conv2d output shape
         kernel_output_reshaped = tf.reshape(kernel_output, [patches_shape[0], patches_shape[1], patches_shape[2], self.filters])
         
         return kernel_output_reshaped
@@ -71,14 +68,12 @@ class KANConv2D(Layer):
     def compute_output_shape(self, input_shape):
         return input_shape[:-1] + (self.filters,)
 
-# Data Preparation
 original_data_dir = '/content/drive/MyDrive/gtprac/original_grape_data'
 train_dir = '/content/drive/MyDrive/gtprac/original_grape_data/binary_train'
 test_dir = '/content/drive/MyDrive/gtprac/original_grape_data/binary_test'
 
 print("Data preparation complete.")
 
-# Set up the data generators
 train_datagen = ImageDataGenerator(
     rescale=1./255,
     rotation_range=40,
@@ -108,7 +103,6 @@ validation_generator = validation_datagen.flow_from_directory(
 )
 print(f"Validation data loaded from {test_dir}")
 
-# Debugging: Check class distribution in generators
 print("Class distribution in training data:")
 print(train_generator.class_indices)
 print(np.bincount(train_generator.classes))
@@ -118,7 +112,7 @@ print(validation_generator.class_indices)
 print(np.bincount(validation_generator.classes))
 
 def build_model():
-    inputs = Input(shape=(150, 150, 3))  # Input shape includes 3 channels for RGB
+    inputs = Input(shape=(150, 150, 3)) 
     x = KANConv2D(64, 3, padding='same')(inputs)
     x = MaxPooling2D(2, 2)(x)
     x = KANConv2D(128, 3, padding='same')(x)
@@ -135,8 +129,7 @@ def build_model():
     model = Model(inputs, outputs)
     return model
 
-# Adjust class weights to reduce ESCA false negatives
-class_weights = {0: 2.0, 1: 1.0}  
+class_weights = {0: 3.4, 1: 1.0}  
 
 # experiement with focal loss -> be sure to change in compile
 def focal_loss(gamma=2.5, alpha=0.5):
@@ -150,9 +143,8 @@ def focal_loss(gamma=2.5, alpha=0.5):
         return tf.keras.backend.mean(fl)
     return focal_loss_fixed
 
-# Compile the model with focal loss and learning rate adjustment
 model = build_model()
-optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipvalue=1.0)  # Adjusted learning rate
+optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001, clipvalue=0.5)  
 model.compile(
     optimizer=optimizer,
     # loss=focal_loss(),
@@ -160,60 +152,48 @@ model.compile(
     metrics=['accuracy']
 )
 
-# Define early stopping and learning rate reduction callbacks
 early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
 reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=0.00001)
 
-# Train the model with class weights and early stopping
 history = model.fit(
     train_generator,
     steps_per_epoch=train_generator.samples // train_generator.batch_size,
-    epochs=1,  
+    epochs=50,  
     validation_data=validation_generator,
     validation_steps=validation_generator.samples // validation_generator.batch_size,
     class_weight=class_weights,
     callbacks=[early_stopping, reduce_lr]
 )
 
-# Save keras model
 model.save('/content/drive/MyDrive/grapeleaf_classifier_kan_best.keras')
 
-# Evaluate
 print("Starting model evaluation...")
 loss, accuracy = model.evaluate(validation_generator)
 print(f'Test accuracy: {accuracy}, Test loss: {loss}')
 
-# Make predictions on the validation data
 print("Starting predictions...")
-validation_generator.reset()  # Reset the generator to start from the beginning
+validation_generator.reset() 
 predictions = model.predict(validation_generator)
 
-# Print the range of predictions to check if they're reasonable
 print(f'Predictions range: {np.min(predictions)} to {np.max(predictions)}')
 
-# Convert probabilities to binary classes using a threshold of 0.5
-threshold = 0.50  # Adjust this value as needed
+threshold = 0.50  
 predicted_classes = np.where(predictions > threshold, 1, 0)
 
-# Get true labels
 true_classes = validation_generator.classes
 class_labels = list(validation_generator.class_indices.keys())
 true_classes = validation_generator.classes
 
-# Print every prediction along with the corresponding image name and true class
 print("Predictions for each image:")
 for i in range(len(predictions)):
-    # Retrieve the image file path
     image_path = validation_generator.filepaths[i]
     image_name = os.path.basename(image_path)
     
     print(f"Image: {image_name}, Prediction: {predictions[i][0]:.4f}, Predicted class: {'Healthy' if predicted_classes[i] == 1 else 'Esca'}, True class: {'Healthy' if true_classes[i] == 1 else 'Esca'}")
 
-# Print classification report
 print("Classification report:")
 print(classification_report(true_classes, predicted_classes, target_names=class_labels))
 
-# Plot confusion matrix
 conf_matrix = confusion_matrix(true_classes, predicted_classes)
 plt.figure(figsize=(8, 6))
 sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=class_labels, yticklabels=class_labels)
@@ -222,11 +202,9 @@ plt.ylabel('True')
 plt.title('Confusion Matrix')
 plt.show()
 
-# Compute ROC curve and ROC area
 fpr, tpr, thresholds = roc_curve(true_classes, predictions)
 roc_auc = auc(fpr, tpr)
 
-# Plot ROC curve
 plt.figure()
 plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (area = %0.2f)' % roc_auc)
 plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
@@ -237,15 +215,10 @@ plt.ylabel('True Positive Rate')
 plt.title('Receiver Operating Characteristic')
 plt.legend(loc="lower right")
 
-# Save ROC curve to Google Drive
 roc_curve_path = os.path.join(original_data_dir, 'roc_curve.png')
 plt.savefig(roc_curve_path)
 print(f'ROC curve saved to {roc_curve_path}')
 
-# Display the plot
-plt.show()
-
-# Determine the optimal threshold
 optimal_idx = np.argmax(tpr - fpr)
 optimal_threshold = thresholds[optimal_idx]
 print(f'Optimal threshold: {optimal_threshold}')
