@@ -95,7 +95,7 @@ validation_generator = validation_datagen.flow_from_directory(
     class_mode='binary'
 )
 
-class_weights = {0: 3.4, 1: 1.0}
+class_weights = {0: 1.88, 1: 0.68}
 
 base_model = EfficientNetB0(include_top=False, input_shape=(150, 150, 3), weights='imagenet')
 base_model.trainable = False
