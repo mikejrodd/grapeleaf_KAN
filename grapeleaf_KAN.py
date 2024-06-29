@@ -1,9 +1,10 @@
 import tensorflow as tf
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, MaxPooling2D, Flatten, Dense, Dropout, Layer
+from tensorflow.keras.layers import Input, MaxPooling2D, Flatten, Dense, Dropout, Layer, BatchNormalization
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras import mixed_precision
+from tensorflow.keras.regularizers import l2
 from sklearn.metrics import classification_report, confusion_matrix
 import numpy as np
 import os
@@ -12,22 +13,24 @@ import seaborn as sns
 from sklearn.metrics import roc_curve, auc
 
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
-mixed_precision.set_global_policy('mixed_float16')
+# mixed_precision.set_global_policy('mixed_float16')
 
 class KANConv2D(Layer):
-    def __init__(self, filters, kernel_size, strides=(1, 1), padding='valid', **kwargs):
+    def __init__(self, filters, kernel_size, strides=(1, 1), padding='valid', kernel_regularizer=None, **kwargs):
         super(KANConv2D, self).__init__(**kwargs)
         self.filters = filters
         self.kernel_size = kernel_size if isinstance(kernel_size, tuple) else (kernel_size, kernel_size)
         self.strides = strides
         self.padding = padding
+        self.kernel_regularizer = kernel_regularizer
 
     def build(self, input_shape):
         input_dim = input_shape[-1]
         self.kernel_shape = self.kernel_size + (input_dim, self.filters)
         self.kernel = self.add_weight(shape=self.kernel_shape,
                                       initializer='glorot_uniform',
-                                      name='kernel')
+                                      name='kernel',
+                                      regularizer=self.kernel_regularizer)
         self.bias = self.add_weight(shape=(self.filters,),
                                     initializer='zeros',
                                     name='bias')
@@ -113,23 +116,27 @@ print(np.bincount(validation_generator.classes))
 
 def build_model():
     inputs = Input(shape=(150, 150, 3)) 
-    x = KANConv2D(64, 3, padding='same')(inputs)
+    x = KANConv2D(64, 3, padding='same', kernel_regularizer=l2(0.01))(inputs)
+    x = BatchNormalization()(x)
     x = MaxPooling2D(2, 2)(x)
-    x = KANConv2D(128, 3, padding='same')(x)
+    x = KANConv2D(128, 3, padding='same', kernel_regularizer=l2(0.01))(x)
+    x = BatchNormalization()(x)
     x = MaxPooling2D(2, 2)(x)
-    x = KANConv2D(256, 3, padding='same')(x)
+    x = KANConv2D(256, 3, padding='same', kernel_regularizer=l2(0.01))(x)
+    x = BatchNormalization()(x)
     x = MaxPooling2D(2, 2)(x)
-    x = KANConv2D(512, 3, padding='same')(x)
+    x = KANConv2D(512, 3, padding='same', kernel_regularizer=l2(0.01))(x)
+    x = BatchNormalization()(x)
     x = MaxPooling2D(2, 2)(x)
     x = Flatten()(x)
-    x = Dense(512, activation='relu')(x)
+    x = Dense(512, activation='relu', kernel_regularizer=l2(0.01))(x)
     x = Dropout(0.5)(x)
     outputs = Dense(1, activation='sigmoid')(x)
     
     model = Model(inputs, outputs)
     return model
 
-class_weights = {0: 1.88, 1: 0.68} 
+class_weights = {0: 1.88, 1: 0.68}  
 
 # experiement with focal loss -> be sure to change in compile
 def focal_loss(gamma=2.5, alpha=0.5):
@@ -144,15 +151,15 @@ def focal_loss(gamma=2.5, alpha=0.5):
     return focal_loss_fixed
 
 model = build_model()
-optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001, clipvalue=0.5)  
+optimizer = tf.keras.optimizers.Adam(learning_rate=0.00001, clipvalue=0.5)  
 model.compile(
     optimizer=optimizer,
-    # loss=focal_loss(),
-    loss='binary_crossentropy',
+    loss=focal_loss(),
+    # loss='binary_crossentropy',
     metrics=['accuracy']
 )
 
-early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+early_stopping = EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True)
 reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=0.00001)
 
 history = model.fit(
@@ -182,7 +189,6 @@ predicted_classes = np.where(predictions > threshold, 1, 0)
 
 true_classes = validation_generator.classes
 class_labels = list(validation_generator.class_indices.keys())
-true_classes = validation_generator.classes
 
 print("Predictions for each image:")
 for i in range(len(predictions)):
