@@ -3,7 +3,7 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.applications import EfficientNetB0
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, MaxPooling2D, Flatten, Dense, Dropout, Layer, BatchNormalization
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, Callback
 from tensorflow.keras import mixed_precision
 from tensorflow.keras.regularizers import l2
 from sklearn.metrics import classification_report, confusion_matrix, roc_curve, auc
@@ -14,7 +14,7 @@ import seaborn as sns
 
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
-mixed_precision.set_global_policy('mixed_float16')
+# mixed_precision.set_global_policy('mixed_float16')
 
 class KANConv2D(Layer):
     def __init__(self, filters, kernel_size, strides=(1, 1), padding='valid', kernel_regularizer=None, **kwargs):
@@ -29,14 +29,14 @@ class KANConv2D(Layer):
         input_dim = input_shape[-1]
         self.kernel_shape = self.kernel_size + (input_dim, self.filters)
         self.kernel = self.add_weight(shape=self.kernel_shape,
-                                      initializer='glorot_uniform',
+                                      initializer='he_normal',
                                       name='kernel',
                                       regularizer=self.kernel_regularizer)
         self.bias = self.add_weight(shape=(self.filters,),
                                     initializer='zeros',
                                     name='bias')
         self.control_points = self.add_weight(shape=self.kernel_shape,
-                                              initializer='glorot_uniform',
+                                              initializer='he_normal',
                                               name='control_points')
 
     def call(self, inputs):
@@ -104,6 +104,84 @@ validation_generator = validation_datagen.flow_from_directory(
     class_mode='binary'
 )
 
+class EarlyStoppingByMetric(Callback):
+    def __init__(self, monitor1='accuracy', monitor2='recall', monitor3='recall_esca', value1=0.9, value2=0.8, value3=0.8, verbose=1):
+        super(Callback, self).__init__()
+        self.monitor1 = monitor1
+        self.monitor2 = monitor2
+        self.monitor3 = monitor3
+        self.value1 = value1
+        self.value2 = value2
+        self.value3 = value3
+        self.verbose = verbose
+
+    def on_epoch_end(self, epoch, logs={}):
+        current1 = logs.get(self.monitor1)
+        current2 = logs.get(self.monitor2)
+        current3 = logs.get(self.monitor3)
+        if current1 is None or current2 is None or current3 is None:
+            return
+        
+        if current1 >= self.value1 and current2 >= self.value2 and current3 >= self.value3:
+            if self.verbose > 0:
+                print(f"Epoch {epoch+1}: early stopping threshold reached - {self.monitor1}: {current1}, {self.monitor2}: {current2}, {self.monitor3}: {current3}")
+            self.model.stop_training = True
+
+class RecallForClass(tf.keras.metrics.Metric):
+    def __init__(self, class_id, name='recall_for_class', **kwargs):
+        super(RecallForClass, self).__init__(name=name, **kwargs)
+        self.class_id = class_id
+        self.true_positives = self.add_weight(name='tp', initializer='zeros')
+        self.positives = self.add_weight(name='pos', initializer='zeros')
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_true = tf.cast(y_true, tf.int32)
+        y_pred = tf.cast(tf.greater(y_pred, 0.5), tf.int32)
+        
+        class_id_true = tf.equal(y_true, self.class_id)
+        class_id_pred = tf.equal(y_pred, self.class_id)
+
+        true_positives = tf.reduce_sum(tf.cast(tf.logical_and(class_id_true, class_id_pred), self.dtype))
+        positives = tf.reduce_sum(tf.cast(class_id_true, self.dtype))
+
+        self.true_positives.assign_add(true_positives)
+        self.positives.assign_add(positives)
+
+    def result(self):
+        return self.true_positives / (self.positives + tf.keras.backend.epsilon())
+
+    def reset_state(self):
+        self.true_positives.assign(0)
+        self.positives.assign(0)
+
+class ModelCheckpointAvgRecall(Callback):
+    def __init__(self, filepath, monitor1='recall', monitor2='recall_esca', verbose=1, save_best_only=True, mode='max'):
+        super(ModelCheckpointAvgRecall, self).__init__()
+        self.filepath = filepath
+        self.monitor1 = monitor1
+        self.monitor2 = monitor2
+        self.verbose = verbose
+        self.save_best_only = save_best_only
+        self.mode = mode
+        self.best = -np.Inf if self.mode == 'max' else np.Inf
+        self.monitor_op = np.greater if self.mode == 'max' else np.less
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        monitor1_value = logs.get(self.monitor1)
+        monitor2_value = logs.get(self.monitor2)
+        
+        if monitor1_value is not None and monitor2_value is not None:
+            avg_recall = (monitor1_value + monitor2_value) / 2
+            if self.monitor_op(avg_recall, self.best):
+                if self.verbose > 0:
+                    print(f'\nEpoch {epoch + 1}: {self.monitor1} and {self.monitor2} improved ({self.best:.5f} --> {avg_recall:.5f}). Saving model to {self.filepath}')
+                self.best = avg_recall
+                self.model.save(self.filepath)
+
+# Use the custom recall metric for class 0 (esca)
+recall_for_class_0 = RecallForClass(class_id=0, name='recall_esca')
+
 class_weights = {0: 1.88, 1: 0.68}
 
 base_model = EfficientNetB0(include_top=False, input_shape=(150, 150, 3), weights='imagenet')
@@ -138,24 +216,34 @@ def build_model():
     return model
 
 model = build_model()
-optimizer = tf.keras.optimizers.Adam(learning_rate=0.00001, clipnorm=0.05)
+optimizer = tf.keras.optimizers.Nadam(learning_rate=0.0001, clipnorm=0.02)
 model.compile(
     optimizer=optimizer,
     loss='binary_crossentropy',
-    metrics=['accuracy']
+    metrics=['accuracy', tf.keras.metrics.Recall(), recall_for_class_0]
 )
 
 early_stopping = EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True)
 reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=0.00001)
+custom_early_stopping = EarlyStoppingByMetric(monitor1='accuracy', monitor2='recall', monitor3='recall_esca', value1=0.9, value2=0.9, value3=0.8)
+
+checkpoint = ModelCheckpointAvgRecall(
+    filepath='/content/drive/MyDrive/best_grapeleaf_classifier_kan_enet.keras', 
+    monitor1='recall', 
+    monitor2='recall_esca', 
+    verbose=1, 
+    save_best_only=True, 
+    mode='max'
+)
 
 history = model.fit(
     train_generator,
     steps_per_epoch=train_generator.samples // train_generator.batch_size,
-    epochs=100,
+    epochs=1,
     validation_data=validation_generator,
     validation_steps=validation_generator.samples // validation_generator.batch_size,
     class_weight=class_weights,
-    callbacks=[early_stopping, reduce_lr]
+    callbacks=[early_stopping, reduce_lr, custom_early_stopping, checkpoint]
 )
 
 model.save('/content/drive/MyDrive/grapeleaf_classifier_kan_enet.keras')
