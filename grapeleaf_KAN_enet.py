@@ -152,7 +152,7 @@ def oversample_generator(generator, minority_class_index=0, minority_class_weigh
 train_generator = oversample_generator(train_generator)
 
 class EarlyStoppingByMetric(Callback):
-    def __init__(self, monitor1='accuracy', monitor2='recall', monitor3='recall_esca', value1=0.9, value2=0.8, value3=0.8, verbose=1):
+    def __init__(self, monitor1='accuracy', monitor2='recall', monitor3='recall_esca', value1=0.9, value2=0.8, value3=0.8, val_loss_threshold=0.8, verbose=1):
         super(Callback, self).__init__()
         self.monitor1 = monitor1
         self.monitor2 = monitor2
@@ -160,18 +160,20 @@ class EarlyStoppingByMetric(Callback):
         self.value1 = value1
         self.value2 = value2
         self.value3 = value3
+        self.val_loss_threshold = val_loss_threshold
         self.verbose = verbose
 
     def on_epoch_end(self, epoch, logs={}):
         current1 = logs.get(self.monitor1)
         current2 = logs.get(self.monitor2)
         current3 = logs.get(self.monitor3)
-        if current1 is None or current2 is None or current3 is None:
+        current_val_loss = logs.get('val_loss')
+        if current1 is None or current2 is None or current3 is None or current_val_loss is None:
             return
         
-        if current1 >= self.value1 and current2 >= self.value2 and current3 >= self.value3:
+        if current1 >= self.value1 and current2 >= self.value2 and current3 >= self.value3 and current_val_loss < self.val_loss_threshold:
             if self.verbose > 0:
-                print(f"Epoch {epoch+1}: early stopping threshold reached - {self.monitor1}: {current1}, {self.monitor2}: {current2}, {self.monitor3}: {current3}")
+                print(f"Epoch {epoch+1}: early stopping threshold reached - {self.monitor1}: {current1}, {self.monitor2}: {current2}, {self.monitor3}: {current3}, val_loss: {current_val_loss}")
             self.model.stop_training = True
 
 class RecallForClass(tf.keras.metrics.Metric):
@@ -297,7 +299,7 @@ checkpoint = ModelCheckpointAvgRecall(
 history = model.fit(
     train_generator,
     steps_per_epoch=1800,
-    epochs=3,
+    epochs=20,
     validation_data=validation_generator,
     validation_steps=validation_generator.samples // validation_generator.batch_size,
     # class_weight=class_weights,
