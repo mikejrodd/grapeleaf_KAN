@@ -71,6 +71,17 @@ class KANConv2D(Layer):
 
     def compute_output_shape(self, input_shape):
         return input_shape[:-1] + (self.filters,)
+    
+    def get_config(self):
+        config = super(KANConv2D, self).get_config()
+        config.update({
+            'filters': self.filters,
+            'kernel_size': self.kernel_size,
+            'strides': self.strides,
+            'padding': self.padding,
+            'kernel_regularizer': self.kernel_regularizer,
+        })
+        return config
 
 original_data_dir = '/content/drive/MyDrive/gtprac/original_grape_data'
 train_dir = '/content/drive/MyDrive/gtprac/original_grape_data/binary_train'
@@ -94,7 +105,8 @@ train_generator = train_datagen.flow_from_directory(
     train_dir,
     target_size=(150, 150),
     batch_size=4,
-    class_mode='binary'
+    class_mode='binary',
+    shuffle=True
 )
 
 validation_generator = validation_datagen.flow_from_directory(
@@ -103,6 +115,41 @@ validation_generator = validation_datagen.flow_from_directory(
     batch_size=4,
     class_mode='binary'
 )
+
+def oversample_generator(generator, minority_class_index=0, minority_class_weight=1.88):
+    while True:
+        x_batch, y_batch = next(generator)
+        minority_mask = (y_batch == minority_class_index)
+        majority_mask = ~minority_mask
+        
+        minority_x = x_batch[minority_mask]
+        minority_y = y_batch[minority_mask]
+        majority_x = x_batch[majority_mask]
+        majority_y = y_batch[majority_mask]
+        
+        # Debugging: Check the batch composition
+        # print(f'Minority samples in batch: {len(minority_x)}, Majority samples in batch: {len(majority_x)}')
+        
+        if len(minority_x) == 0:
+            continue  # Skip if no minority class samples in batch
+        
+        # Oversample the minority class
+        oversampled_minority_x = np.repeat(minority_x, int(minority_class_weight), axis=0)
+        oversampled_minority_y = np.repeat(minority_y, int(minority_class_weight), axis=0)
+        
+        # Combine original and oversampled data
+        combined_x = np.concatenate((majority_x, oversampled_minority_x), axis=0)
+        combined_y = np.concatenate((majority_y, oversampled_minority_y), axis=0)
+        
+        # Shuffle combined data
+        p = np.random.permutation(len(combined_y))
+        combined_x = combined_x[p]
+        combined_y = combined_y[p]
+        
+        yield combined_x, combined_y
+
+
+train_generator = oversample_generator(train_generator)
 
 class EarlyStoppingByMetric(Callback):
     def __init__(self, monitor1='accuracy', monitor2='recall', monitor3='recall_esca', value1=0.9, value2=0.8, value3=0.8, verbose=1):
@@ -179,22 +226,19 @@ class ModelCheckpointAvgRecall(Callback):
                 self.best = avg_recall
                 self.model.save(self.filepath)
 
-# Use the custom recall metric for class 0 (esca)
 recall_for_class_0 = RecallForClass(class_id=0, name='recall_esca')
 
 class_weights = {0: 1.88, 1: 0.68}
-
-base_model = EfficientNetB0(include_top=False, input_shape=(150, 150, 3), weights='imagenet')
-base_model.trainable = False
 
 def build_model():
     base_model = EfficientNetB0(include_top=False, input_shape=(150, 150, 3), weights='imagenet')
     base_model.trainable = False
     
-    # an intermediate layer of EfficientNetB0
     intermediate_layer_model = tf.keras.Model(inputs=base_model.input, outputs=base_model.get_layer('block2a_expand_activation').output)
     
-    inputs = Input(shape=(150, 150, 3)) 
+    inputs = Input(shape=(150, 150, 3))
+    x = intermediate_layer_model(inputs)
+ 
     x = KANConv2D(64, 3, padding='same', kernel_regularizer=l2(0.01))(inputs)
     x = BatchNormalization()(x)
     x = MaxPooling2D(2, 2)(x)
@@ -209,17 +253,31 @@ def build_model():
     x = MaxPooling2D(2, 2)(x)
     x = Flatten()(x)
     x = Dense(512, activation='relu', kernel_regularizer=l2(0.01))(x)
-    x = Dropout(0.5)(x)
+    x = Dropout(0.8)(x)
     outputs = Dense(1, activation='sigmoid')(x)
     
     model = Model(inputs, outputs)
     return model
 
+# experiement with focal loss -> be sure to change in compile
+def focal_loss(gamma=2.5, alpha=0.25):
+    def focal_loss_fixed(y_true, y_pred):
+        epsilon = tf.keras.backend.epsilon()
+        y_pred = tf.keras.backend.clip(y_pred, epsilon, 1. - epsilon)
+        y_true = tf.cast(y_true, tf.float32)
+        alpha_t = y_true * alpha + (tf.keras.backend.ones_like(y_true) - y_true) * (1 - alpha)
+        p_t = y_true * y_pred + (tf.keras.backend.ones_like(y_true) - y_true) * (1 - y_pred)
+        fl = - alpha_t * tf.keras.backend.pow((tf.keras.backend.ones_like(y_true) - p_t), gamma) * tf.keras.backend.log(p_t)
+        return tf.keras.backend.mean(fl)
+    return focal_loss_fixed
+
+
 model = build_model()
-optimizer = tf.keras.optimizers.Nadam(learning_rate=0.0001, clipnorm=0.02)
+optimizer = tf.keras.optimizers.Nadam(learning_rate=0.00001, clipvalue = 0.5, clipnorm=0.02)
 model.compile(
     optimizer=optimizer,
-    loss='binary_crossentropy',
+    # loss='binary_crossentropy',
+    loss=focal_loss(),
     metrics=['accuracy', tf.keras.metrics.Recall(), recall_for_class_0]
 )
 
@@ -238,19 +296,23 @@ checkpoint = ModelCheckpointAvgRecall(
 
 history = model.fit(
     train_generator,
-    steps_per_epoch=train_generator.samples // train_generator.batch_size,
-    epochs=1,
+    steps_per_epoch=1800,
+    epochs=3,
     validation_data=validation_generator,
     validation_steps=validation_generator.samples // validation_generator.batch_size,
-    class_weight=class_weights,
+    # class_weight=class_weights,
     callbacks=[early_stopping, reduce_lr, custom_early_stopping, checkpoint]
 )
 
 model.save('/content/drive/MyDrive/grapeleaf_classifier_kan_enet.keras')
 
 # Evaluate the model
-loss, accuracy = model.evaluate(validation_generator)
-print(f'Test accuracy: {accuracy}, Test loss: {loss}')
+results = model.evaluate(validation_generator)
+loss, accuracy, recall, recall_esca = results[0], results[1], results[2], results[3]
+print(f'Test loss: {loss}')
+print(f'Test accuracy: {accuracy}')
+print(f'Test recall: {recall}')
+print(f'Test recall_esca: {recall_esca}')
 
 # Get predictions and true labels
 predictions = model.predict(validation_generator).ravel()
