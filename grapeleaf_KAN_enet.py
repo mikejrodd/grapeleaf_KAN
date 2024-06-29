@@ -230,16 +230,16 @@ class ModelCheckpointAvgRecall(Callback):
 
 recall_for_class_0 = RecallForClass(class_id=0, name='recall_esca')
 
-class_weights = {0: 1.88, 1: 0.68}
+# class_weights = {0: 1.88, 1: 0.68}
 
 def build_model():
-    base_model = EfficientNetB0(include_top=False, input_shape=(150, 150, 3), weights='imagenet')
-    base_model.trainable = False
+    #base_model = EfficientNetB0(include_top=False, input_shape=(150, 150, 3), weights='imagenet')
+    #base_model.trainable = False
     
-    intermediate_layer_model = tf.keras.Model(inputs=base_model.input, outputs=base_model.get_layer('block2a_expand_activation').output)
+    #intermediate_layer_model = tf.keras.Model(inputs=base_model.input, outputs=base_model.get_layer('block2a_expand_activation').output)
     
     inputs = Input(shape=(150, 150, 3))
-    x = intermediate_layer_model(inputs)
+    #x = intermediate_layer_model(inputs)
  
     x = KANConv2D(64, 3, padding='same', kernel_regularizer=l2(0.01))(inputs)
     x = BatchNormalization()(x)
@@ -275,7 +275,7 @@ def focal_loss(gamma=2.5, alpha=0.25):
 
 
 model = build_model()
-optimizer = tf.keras.optimizers.Nadam(learning_rate=0.00001, clipvalue = 0.5, clipnorm=0.02)
+optimizer = tf.keras.optimizers.Nadam(learning_rate=0.001)
 model.compile(
     optimizer=optimizer,
     # loss='binary_crossentropy',
@@ -285,7 +285,7 @@ model.compile(
 
 early_stopping = EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True)
 reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=0.00001)
-custom_early_stopping = EarlyStoppingByMetric(monitor1='accuracy', monitor2='recall', monitor3='recall_esca', value1=0.9, value2=0.9, value3=0.8)
+custom_early_stopping = EarlyStoppingByMetric(monitor1='accuracy', monitor2='recall', monitor3='recall_esca', value1=0.98, value2=0.9, value3=0.9)
 
 checkpoint = ModelCheckpointAvgRecall(
     filepath='/content/drive/MyDrive/best_grapeleaf_classifier_kan_enet.keras', 
