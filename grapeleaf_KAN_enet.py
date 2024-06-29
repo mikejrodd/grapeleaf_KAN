@@ -14,8 +14,6 @@ import seaborn as sns
 
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
-# mixed_precision.set_global_policy('mixed_float16')
-
 class KANConv2D(Layer):
     def __init__(self, filters, kernel_size, strides=(1, 1), padding='valid', kernel_regularizer=None, **kwargs):
         super(KANConv2D, self).__init__(**kwargs)
@@ -89,13 +87,14 @@ test_dir = '/content/drive/MyDrive/gtprac/original_grape_data/binary_test'
 
 train_datagen = ImageDataGenerator(
     rescale=1./255,
-    rotation_range=40,
+    rotation_range=50,
     width_shift_range=0.3,
     height_shift_range=0.3,
     shear_range=0.3,
     zoom_range=0.3,
     horizontal_flip=True,
-    brightness_range=[0.8, 1.2],
+    vertical_flip=True,
+    brightness_range=[0.7, 1.3],
     fill_mode='nearest'
 )
 
@@ -115,41 +114,6 @@ validation_generator = validation_datagen.flow_from_directory(
     batch_size=4,
     class_mode='binary'
 )
-
-def oversample_generator(generator, minority_class_index=0, minority_class_weight=1.88):
-    while True:
-        x_batch, y_batch = next(generator)
-        minority_mask = (y_batch == minority_class_index)
-        majority_mask = ~minority_mask
-        
-        minority_x = x_batch[minority_mask]
-        minority_y = y_batch[minority_mask]
-        majority_x = x_batch[majority_mask]
-        majority_y = y_batch[majority_mask]
-        
-        # Debugging: Check the batch composition
-        # print(f'Minority samples in batch: {len(minority_x)}, Majority samples in batch: {len(majority_x)}')
-        
-        if len(minority_x) == 0:
-            continue  # Skip if no minority class samples in batch
-        
-        # Oversample the minority class
-        oversampled_minority_x = np.repeat(minority_x, int(minority_class_weight), axis=0)
-        oversampled_minority_y = np.repeat(minority_y, int(minority_class_weight), axis=0)
-        
-        # Combine original and oversampled data
-        combined_x = np.concatenate((majority_x, oversampled_minority_x), axis=0)
-        combined_y = np.concatenate((majority_y, oversampled_minority_y), axis=0)
-        
-        # Shuffle combined data
-        p = np.random.permutation(len(combined_y))
-        combined_x = combined_x[p]
-        combined_y = combined_y[p]
-        
-        yield combined_x, combined_y
-
-
-train_generator = oversample_generator(train_generator)
 
 class EarlyStoppingByMetric(Callback):
     def __init__(self, monitor1='accuracy', monitor2='recall', monitor3='recall_esca', value1=0.9, value2=0.8, value3=0.8, val_loss_threshold=0.8, verbose=1):
@@ -230,56 +194,52 @@ class ModelCheckpointAvgRecall(Callback):
 
 recall_for_class_0 = RecallForClass(class_id=0, name='recall_esca')
 
-# class_weights = {0: 1.88, 1: 0.68}
+class_weights = {0: 1.88, 1: 0.68}
 
 def build_model():
-    #base_model = EfficientNetB0(include_top=False, input_shape=(150, 150, 3), weights='imagenet')
-    #base_model.trainable = False
+    base_model = EfficientNetB0(include_top=False, input_shape=(150, 150, 3), weights='imagenet')
+    base_model.trainable = False
     
-    #intermediate_layer_model = tf.keras.Model(inputs=base_model.input, outputs=base_model.get_layer('block2a_expand_activation').output)
+    intermediate_layer_model = tf.keras.Model(inputs=base_model.input, outputs=base_model.get_layer('block2a_expand_activation').output)
     
     inputs = Input(shape=(150, 150, 3))
-    #x = intermediate_layer_model(inputs)
- 
-    x = KANConv2D(64, 3, padding='same', kernel_regularizer=l2(0.01))(inputs)
+    x = intermediate_layer_model(inputs)
+    
+    x = KANConv2D(64, 3, padding='same', kernel_regularizer=l2(0.01))(x)
     x = BatchNormalization()(x)
     x = MaxPooling2D(2, 2)(x)
+    x = Dropout(0.5)(x)
+    
     x = KANConv2D(128, 3, padding='same', kernel_regularizer=l2(0.01))(x)
     x = BatchNormalization()(x)
     x = MaxPooling2D(2, 2)(x)
-    x = KANConv2D(256, 3, padding='same', kernel_regularizer=l2(0.01))(x)
-    x = BatchNormalization()(x)
-    x = MaxPooling2D(2, 2)(x)
-    x = KANConv2D(512, 3, padding='same', kernel_regularizer=l2(0.01))(x)
-    x = BatchNormalization()(x)
-    x = MaxPooling2D(2, 2)(x)
+    x = Dropout(0.5)(x)
+    
     x = Flatten()(x)
-    x = Dense(512, activation='relu', kernel_regularizer=l2(0.01))(x)
-    x = Dropout(0.8)(x)
+    x = Dense(256, activation='relu', kernel_regularizer=l2(0.01))(x)
+    x = Dropout(0.3)(x)
+    
     outputs = Dense(1, activation='sigmoid')(x)
     
     model = Model(inputs, outputs)
     return model
 
-# experiement with focal loss -> be sure to change in compile
 def focal_loss(gamma=2.5, alpha=0.25):
     def focal_loss_fixed(y_true, y_pred):
         epsilon = tf.keras.backend.epsilon()
         y_pred = tf.keras.backend.clip(y_pred, epsilon, 1. - epsilon)
         y_true = tf.cast(y_true, tf.float32)
-        alpha_t = y_true * alpha + (tf.keras.backend.ones_like(y_true) - y_true) * (1 - alpha)
+        alpha_t = y_true * alpha + (1 - y_true) * (1 - alpha)
         p_t = y_true * y_pred + (tf.keras.backend.ones_like(y_true) - y_true) * (1 - y_pred)
         fl = - alpha_t * tf.keras.backend.pow((tf.keras.backend.ones_like(y_true) - p_t), gamma) * tf.keras.backend.log(p_t)
         return tf.keras.backend.mean(fl)
     return focal_loss_fixed
 
-
 model = build_model()
-optimizer = tf.keras.optimizers.Nadam(learning_rate=0.001)
+optimizer = tf.keras.optimizers.Nadam(learning_rate=0.00001)
 model.compile(
     optimizer=optimizer,
-    # loss='binary_crossentropy',
-    loss=focal_loss(),
+    loss='binary_crossentropy',
     metrics=['accuracy', tf.keras.metrics.Recall(), recall_for_class_0]
 )
 
@@ -298,17 +258,16 @@ checkpoint = ModelCheckpointAvgRecall(
 
 history = model.fit(
     train_generator,
-    steps_per_epoch=1800,
-    epochs=20,
+    steps_per_epoch=1500,
+    epochs=5,
     validation_data=validation_generator,
     validation_steps=validation_generator.samples // validation_generator.batch_size,
-    # class_weight=class_weights,
+    class_weight=class_weights,
     callbacks=[early_stopping, reduce_lr, custom_early_stopping, checkpoint]
 )
 
 model.save('/content/drive/MyDrive/grapeleaf_classifier_kan_enet.keras')
 
-# Evaluate the model
 results = model.evaluate(validation_generator)
 loss, accuracy, recall, recall_esca = results[0], results[1], results[2], results[3]
 print(f'Test loss: {loss}')
@@ -316,15 +275,12 @@ print(f'Test accuracy: {accuracy}')
 print(f'Test recall: {recall}')
 print(f'Test recall_esca: {recall_esca}')
 
-# Get predictions and true labels
 predictions = model.predict(validation_generator).ravel()
 true_classes = validation_generator.classes
-predicted_classes = np.where(predictions > 0.5, 1, 0)
+predicted_classes = np.where(predictions > 0.15, 1, 0)
 
-# Compute confusion matrix
 cm = confusion_matrix(true_classes, predicted_classes)
 
-# Plot confusion matrix
 plt.figure(figsize=(8, 6))
 sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
 plt.xlabel('Predicted')
